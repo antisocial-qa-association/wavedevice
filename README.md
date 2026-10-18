@@ -4,38 +4,33 @@
 Linux kernel module.
 
 Someone on Mastodon said somebody should make `/dev/sine` and
-`/dev/sawtooth` to go with `/dev/urandom`, for audio testing. They were
-joking. This is that, and it works:
+`/dev/sawtooth`. Like `/dev/urandom`, but for waveforms. Half a
+shitpost. This is that, and it works:
 
-```sh
+```
 aplay -f U8 -r 48000 /dev/sine
 ```
 
-That's a 440 Hz tone at half volume, until you hit Ctrl-C.
+You'll hear it.
 
 ## What you get
 
-- Four character devices, all mode 0444. Each one is an endless stream
-  of **unsigned 8-bit mono** samples, centered on 128.
+- Four character devices. Each one is an endless stream
+  of unsigned 8-bit mono samples, centered on 128.
 - Defaults: 440 Hz at 48000 samples/s, amplitude 128 of 256 (about
   -6 dBFS). Full scale square waves hurt; that's why the default is half.
-- Each `open()` gets its own wave, starting from phase 0. Two players are
-  two independent waves. A file descriptor shared by threads or forks is
-  one stream: each `read()` gets the next chunk.
-- Reads never hit EOF and never come up short, except when a signal
-  arrives. Ctrl-C works even in the middle of one
-  enormous `read()`.
-- Nothing can write to them. Users get `Permission denied` at open; root
-  can open them, but every write fails with `EINVAL`. Seeks fail with
-  `ESPIPE`.
+- Each `open()` gets its own wave, starting from phase 0. Each fd is a 
+  separate wave. A file descriptor shared by threads or forks is one
+  stream: each `read()` gets the next chunk.
+- Reads never hit EOF and never come up short until a signal.
+- Read only. Every write fails with `EINVAL`. Seeks get an `ESPIPE`.
 
 The device doesn't pace itself. It produces bytes as fast as you read
-them (about 900 MB/s on a laptop VM). The sample rate only tells it how
-far to step per byte, so tell your player the same rate.
+them, about 900 MB/s when tested. Read a byte, get a byte.
 
-### Listen
+### Listening
 
-```sh
+```
 aplay -f U8 -r 48000 /dev/square
 sox -t raw -e unsigned -b 8 -r 48000 -c 1 /dev/sawtooth -d
 ffplay -f u8 -ar 48000 -ch_layout mono -nodisp /dev/triangle
@@ -44,52 +39,40 @@ head -c 480000 /dev/sine > ten-seconds.raw
 
 ## Install
 
-### DKMS (recommended)
+### DKMS
 
 DKMS rebuilds the module for each kernel you install.
 
-```sh
-sudo apt install dkms linux-headers-$(uname -r)   # or your distro's
+```
+sudo apt install dkms linux-headers-$(uname -r)   # or whatever
 sudo make dkms-install
 sudo modprobe wavedevice
 ```
 
 Remove it with `sudo make dkms-uninstall`.
 
-**Secure Boot:** a module the kernel can't verify is refused with `Key
-was rejected by service`. DKMS signs what it builds, but you have to
-enroll its key once. The key is wherever `mok_certificate` points in
-`/etc/dkms/framework.conf` (or `framework.conf.d/`). On Debian that's
-`/var/lib/dkms/mok.pub`; Ubuntu usually uses
-`/var/lib/shim-signed/mok/MOK.der`.
-
-```sh
-sudo mokutil --import /var/lib/dkms/mok.pub   # asks you to set a password
-```
-
-Reboot. The blue MOK Manager screen appears: choose "Enroll MOK" and
-type that password. (Debian is tested; Ubuntu's path is from its docs.)
+**Secure Boot:** You're kidding, right?
 
 ### Plain build
 
-```sh
+```
 make                      # against the running kernel's headers
 sudo insmod wavedevice.ko
 ```
 
 ### Kernel taint
 
-Loading any module you built yourself sets taint flag `O` (4096,
-out-of-tree). If the kernel checks signatures and can't verify this
-one, unsigned or signed with a key it hasn't enrolled, it also sets `E`
-(8192). It never sets `P` (proprietary). See "License" for why.
+You'll get an out-of-tree taint. If the kernel checks signatures
+you get an `E` taint unless you deal with signing.
+
+It doesn't trip the proprietary flag. See "LICENSE" for why.
 
 ## Tuning
 
-Module parameters set the starting point for each new `open()`.
-Streams that are already open never change.
+Defaults are set as module parameters. Streams that are already
+open aren't affected if these change.
 
-```sh
+```
 sudo modprobe wavedevice freq=1000 rate=44100 amp=64
 echo 220 | sudo tee /sys/module/wavedevice/parameters/freq
 ```
@@ -100,22 +83,25 @@ echo 220 | sudo tee /sys/module/wavedevice/parameters/freq
 | `rate` | 1 .. 768000  | 48000   |
 | `amp`  | 0 .. 256     | 128     |
 
-Out-of-range values are refused when you write them. `freq` can be
-above `rate/2` for a moment while you change both, but an `open()` in
-that state fails with `EINVAL`, and the kernel log says why.
+Invalid parameters get refused. `freq` can be above `rate/2` for the
+time between writes. `open()` in that state fails with `EINVAL`, and
+the kernel log says why.
 
-To make settings stick, put them in `/etc/modprobe.d/wavedevice.conf`:
-`options wavedevice freq=440 amp=96`.
+To make settings stick, put them in `/etc/modprobe.d/wavedevice.conf`
+or something:
+`options wavedevice freq=440 amp=96`
 
-### Retune a stream you're reading: ioctl
+### Retune a stream on an open fd: ioctl
 
-A program can retune its own file descriptor while it reads. The wave
-carries on from where it was, so there's no click. That's enough for
-sweeps and glides. The API is in [`uapi/wavedevice.h`](uapi/wavedevice.h).
-Changes apply only to that fd. Any user can retune their own; no user
-can retune anyone else's. The shape is fixed per device.
+Open file descriptors can have their parameters changed. The wave
+carries on from where it was, so there's no click. That ought to
+be enough for sweeps and glides. The API is in [`uapi/wavedevice.h`](uapi/wavedevice.h).
+Changes apply only to that fd.
 
-```python
+If you want a different shape, open that chardev. There's no way
+to change an fd's shape.
+
+```
 # sweep.py:  python3 sweep.py | aplay -f U8 -r 48000
 import fcntl, struct, sys
 SET = 1 << 30 | 16 << 16 | ord("~") << 8 | 2   # WAVEDEVICE_SET_PARAMS
@@ -131,41 +117,41 @@ differs; take it from the header.)
 
 ## How it works, and the homage
 
-The oscillator is the MOS 6581 SID's design, the chip in the Commodore
-64: a 24-bit phase accumulator advances by `freq * 2^24 / rate` every
+The oscillator is... approximately a 6581 SID. Very approximately.
+A 24-bit phase accumulator ticks by `freq * 2^24 / rate` every
 sample, and the top 8 bits become the output. Sawtooth is those bits
-as they are. Triangle is the SID's trick of XORing them with their own
-top bit. Square is the top bit. The SID never had a sine; we cheat with
-a 256-entry table generated by [`tools/gensine.py`](tools/gensine.py).
+as they are. Triangle is the SID trick of XORing them with their own
+top bit. Square is the top bit. The sine is fake. It's just a
+a 256-entry table generated with [`tools/gensine.py`](tools/gensine.py).
 
 It's integer-only, because kernels don't do floating point. It doesn't
-band-limit either, so high notes alias, like the SID's do.
+band-limit either, aliasing is a thing. Just like back home.
 
 This is not a SID. There's no ADSR, no filter, no ring mod, no mixing,
-no voices. `/dev/sid` is left to someone with ambition.
+no voices. `/dev/sid` is left to someone with ambition and actual skill.
 
-## Known limits
+## Limitations
 
 - **Sine at exactly `rate/2` is silent.** Every sample lands on a zero
-  crossing. That's correct and still looks broken. Square at `rate/2`
-  works.
+  crossing. It's not technically a bug if you think about it. A square
+  at `rate/2` works.
 - **No `splice()` or `sendfile()`.** They fail with `EINVAL`. `pv`
   falls back to read and write without you noticing. `cat`, `dd` and
   every audio player use `read()`.
 - **32-bit programs on a 64-bit kernel** should work with the ioctl,
   since the struct is all `__u32`. Nobody has tested it: the dev box is
-  Apple silicon, which has no 32-bit mode.
+  aarch64, which has no 32-bit mode.
 - **Tested on** Linux 6.12 (Debian 13, arm64), including under KASAN,
   lockdep, kmemleak and UBSAN. It should build on 5.10 or newer. Older
   is on you.
 
 ## Development
 
-The dev machine is a Mac, so everything kernel-related runs in a
+The dev machine is a Mac, so everything kernel-related runs under
 [lima](https://lima-vm.io) VM. Nothing is mounted from the Mac; the
 tree is copied in with tar.
 
-```sh
+```
 make vm-up        # create and provision the Debian 13 VM
 make vm-check     # everything below
 make vm-test      # userspace oscillator tests under ASan and UBSan
@@ -181,7 +167,7 @@ For the debug-kernel run, `tools/debugkernel.sh` builds a kernel with
 KASAN, lockdep, kmemleak and UBSAN from Debian's own source, in a
 second VM:
 
-```sh
+```
 VM=wavedevice-debug CPUS=4 MEM=3 tools/vm up
 VM=wavedevice-debug tools/vm push
 limactl shell --workdir / wavedevice-debug -- \
@@ -190,16 +176,16 @@ limactl shell --workdir / wavedevice-debug -- sudo systemctl reboot
 VM=wavedevice-debug make vm-check
 ```
 
-The reboot runs inside the guest because `limactl stop` hung here. The
-script refuses to run outside a VM: it makes an unsigned debug kernel
-the default boot entry.
+The reboot runs inside the guest because `limactl stop` seemed to
+hang. The script refuses to run outside a VM. An unsigned
+debug kernel the default boot entry.
 
 `tools/stream.py` serves the devices on TCP ports 7671 to 7674 so you
 can listen from another machine. It has no auth, binds `127.0.0.1`
 unless you pass `--host`, and serves 8 connections at once:
 
-```sh
-tools/stream.py                       # on the box with the module
+```
+tools/stream.py   # on the box with the module running
 ffplay -f u8 -ar 48000 -ch_layout mono -nodisp tcp://127.0.0.1:7671
 ```
 
@@ -215,4 +201,4 @@ declares `MODULE_LICENSE("GPL and additional rights")`. That's true:
 you have every right the GPL gives you, plus all the rest. It also
 keeps the proprietary taint off. The compiled `.ko` is built against
 GPL kernel headers, so any obligations that brings are between you
-and the kernel. The source is still public domain.
+and the kernel. Good luck. The source is still public domain.
