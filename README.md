@@ -166,9 +166,23 @@ make vm-dkms      # DKMS install, modprobe, read, uninstall
 make checkpatch   # kernel style, --strict, pinned upstream script
 ```
 
-Any compiler or sparse warning fails the build. `tools/debugkernel.sh`
-builds a KASAN and lockdep kernel from Debian's own source inside a
-second VM (`VM=wavedevice-debug make vm-check`). `tools/stream.py`
+Any compiler or sparse warning fails the build.
+
+For the debug-kernel run, `tools/debugkernel.sh` builds a kernel with
+KASAN, lockdep, kmemleak and UBSAN from Debian's own source, in a
+second VM:
+
+```sh
+VM=wavedevice-debug CPUS=4 MEM=3 tools/vm up
+VM=wavedevice-debug tools/vm push
+limactl shell --workdir / wavedevice-debug -- sh ~/wavedevice/tools/debugkernel.sh
+limactl shell --workdir / wavedevice-debug -- sudo systemctl reboot
+VM=wavedevice-debug make vm-check
+```
+
+The reboot runs inside the guest because `limactl stop` hung here.
+
+`tools/stream.py`
 serves the devices on TCP ports 7671 to 7674 so you can listen from
 another machine.
 
