@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Behavior tests against the live device. Run as root with the module
 loaded, from the module dir (needs build/wgref)."""
+import ctypes
 import errno
+import mmap
 import os
 import signal
 import subprocess
@@ -152,6 +154,39 @@ def test_shared_fd_is_one_stream():
     seen = sorted(index.get(c, -1) for c in chunks)
     check(seen == list(range(threads * per)),
           "shared-fd reads tore or skipped the stream")
+
+
+def test_fault_keeps_stream_continuous():
+    """A read that faults partway delivers what fit, and the next read
+    continues the wave exactly where the good bytes stopped."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.read.restype = ctypes.c_ssize_t
+    libc.read.argtypes = (ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t)
+    libc.mprotect.argtypes = (ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int)
+    pg = mmap.PAGESIZE
+    m = mmap.mmap(-1, 2 * pg)
+    base = ctypes.addressof(ctypes.c_char.from_buffer(m))
+    check(libc.mprotect(base + pg, pg, 0) == 0, "mprotect")
+    start = 100  # so the fault lands mid-chunk, not on a chunk boundary
+    fd = os.open(DEV, os.O_RDONLY)
+    try:
+        got = libc.read(fd, base + start, 2 * pg)
+        # copy_to_user may stop a little short of the fault, never past it.
+        check(pg - start - 64 <= got <= pg - start,
+              f"faulting read returned {got}")
+        want = ref(got + 5100)
+        first = m[start:start + got]
+        rest = os.read(fd, 5000)
+        check(first + rest == want[:got + 5000],
+              "stream skipped or repeated after fault")
+        check(libc.read(fd, None, 10) == -1 and
+              ctypes.get_errno() == errno.EFAULT, "NULL read not EFAULT")
+        check(os.read(fd, 100) == want[got + 5000:],
+              "stream moved after an all-fault read")
+    finally:
+        os.close(fd)
+        libc.mprotect(base + pg, pg, 3)
+        m.close()
 
 
 def test_throughput():
