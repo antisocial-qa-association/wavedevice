@@ -10,7 +10,7 @@ series=$(echo "$ver" | cut -d. -f1-2)	# e.g. 6.12
 
 sudo apt-get -qq update
 sudo apt-get -qq install -y build-essential bc bison flex libssl-dev \
-	libelf-dev dwarves rsync cpio kmod dpkg-dev fakeroot python3 \
+	libelf-dev dwarves rsync cpio kmod dpkg-dev debhelper fakeroot python3 \
 	"linux-source-$series"
 
 cd ~
