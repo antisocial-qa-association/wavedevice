@@ -1,0 +1,54 @@
+#!/bin/sh
+# Drive the lima test VM from the host.
+#   up     create/start the VM and install build deps (idempotent)
+#   push   copy the working tree to ~/wavedevice in the guest
+#   build  push, then build with W=1 and sparse (C=1); any warning fails
+#   smoke  build, then run tests/smoke.sh as root
+#   shell  interactive shell in the guest's copy
+# No host mounts: the sandbox blocks virtiofs, and builds stay out of
+# the host tree this way.
+set -eu
+VM=${VM:-wavedevice}
+here=$(cd "$(dirname "$0")/.." && pwd)
+
+guest() { limactl shell --workdir / "$VM" -- "$@"; }
+
+up() {
+	limactl list -q | grep -qx "$VM" ||
+		limactl create --name="$VM" --tty=false --cpus=2 --memory=2 \
+			--mount-none template:debian-13
+	limactl list --format '{{.Status}}' "$VM" | grep -qx Running ||
+		limactl start "$VM"
+	guest sh -c 'dpkg -s linux-headers-$(uname -r) sparse python3-numpy >/dev/null 2>&1 ||
+		{ sudo DEBIAN_FRONTEND=noninteractive apt-get -qq update &&
+		  sudo DEBIAN_FRONTEND=noninteractive apt-get -qq install -y \
+			build-essential linux-headers-$(uname -r) sparse python3-numpy; }'
+}
+
+push() {
+	COPYFILE_DISABLE=1 tar -C "$here" --no-xattrs --exclude ./.git \
+		--exclude ./build -cf - . |
+		guest sh -c 'rm -rf ~/wavedevice && mkdir ~/wavedevice &&
+			tar -C ~/wavedevice --warning=no-unknown-keyword -xf -'
+}
+
+build() {
+	push
+	# Kbuild and sparse warnings don't fail the build; make them.
+	guest bash -c 'set -o pipefail
+		make -C ~/wavedevice W=1 C=1 2>&1 | tee ~/wavedevice/build.log
+		! grep -n "warning:" ~/wavedevice/build.log ||
+			{ echo "build: warnings are errors here" >&2; exit 1; }'
+}
+
+smoke() {
+	build
+	guest sh -c 'cd ~/wavedevice && sudo timeout -k 10 300 sh tests/smoke.sh'
+}
+
+shell() { limactl shell --workdir / "$VM" -- sh -c 'cd ~/wavedevice && exec bash -l'; }
+
+case ${1-} in
+up|push|build|smoke|shell) "$1" ;;
+*) echo "usage: $0 {up|push|build|smoke|shell}" >&2; exit 2 ;;
+esac

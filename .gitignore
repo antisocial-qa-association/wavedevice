@@ -2,3 +2,14 @@
 *.o
 *.ko
 build/*
+
+# kbuild leftovers
+*.mod
+*.mod.c
+*.mod.o
+.*.cmd
+.*.d
+Module.symvers
+modules.order
+.tmp_versions/
+build.log
