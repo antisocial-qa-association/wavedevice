@@ -49,10 +49,11 @@ static int wd_open(struct inode *inode, struct file *file)
 	if (ret)
 		return ret;
 
-	wf = kzalloc(sizeof(*wf), GFP_KERNEL);
+	/* _ACCOUNT: charge the reader's memcg; any user can open lots. */
+	wf = kzalloc(sizeof(*wf), GFP_KERNEL_ACCOUNT);
 	if (!wf)
 		return -ENOMEM;
-	wf->buf = kmalloc(WD_CHUNK, GFP_KERNEL);
+	wf->buf = kmalloc(WD_CHUNK, GFP_KERNEL_ACCOUNT);
 	if (!wf->buf) {
 		kfree(wf);
 		return -ENOMEM;

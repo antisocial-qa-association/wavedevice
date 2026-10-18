@@ -89,11 +89,14 @@ def test_kill():
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGKILL):
         p = subprocess.Popen(["cat", DEV], stdout=subprocess.DEVNULL)
         time.sleep(0.2)
+        check(p.poll() is None, f"cat exited early ({p.returncode})")
         p.send_signal(sig)
         try:
             p.wait(timeout=2)
+            check(p.returncode == -sig, f"cat {sig.name}: rc {p.returncode}")
         except subprocess.TimeoutExpired:
             p.kill()
+            p.wait()
             check(False, f"cat survived {sig.name}")
 
 
