@@ -3,6 +3,9 @@
 set -eu
 fail() { echo "FAIL: $*" >&2; exit 1; }
 # Never leave the module loaded behind a failed check.
+if grep -q '^wavedevice ' /proc/modules; then
+	fail "wavedevice already loaded (tools/stream.py?); rmmod it first"
+fi
 trap 'rmmod wavedevice 2>/dev/null || true' EXIT
 
 DEVS="sine sawtooth triangle square"

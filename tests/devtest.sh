@@ -3,6 +3,9 @@
 # root from the module dir inside the VM, after `make build/wgref`.
 set -eu
 fail() { echo "FAIL: $*" >&2; exit 1; }
+if grep -q '^wavedevice ' /proc/modules; then
+	fail "wavedevice already loaded (tools/stream.py?); rmmod it first"
+fi
 trap 'rmmod wavedevice 2>/dev/null || true' EXIT
 
 dmesg -C
