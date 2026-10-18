@@ -4,6 +4,12 @@
 # make it the default boot entry. Run inside a Debian 13 VM as a sudoer.
 # Takes a while; reboot afterwards.
 set -eux
+# It rewrites grub's default to an unsigned debug kernel. Fine in a
+# throwaway VM; on real hardware with Secure Boot, the next boot fails.
+if ! systemd-detect-virt -q && [ "${WAVEDEVICE_ON_METAL:-}" != 1 ]; then
+	echo "not a VM; set WAVEDEVICE_ON_METAL=1 if you really mean it" >&2
+	exit 1
+fi
 export DEBIAN_FRONTEND=noninteractive
 ver=$(uname -r | sed 's/+.*//; s/-.*//')	# e.g. 6.12.111
 series=$(echo "$ver" | cut -d. -f1-2)	# e.g. 6.12

@@ -25,7 +25,9 @@ That's a 440 Hz tone at half volume, until you hit Ctrl-C.
 - Reads never hit EOF and never come up short, except when a signal
   arrives. Ctrl-C works even in the middle of one
   enormous `read()`.
-- Writes fail with `EINVAL`, for root too. Seeks fail with `ESPIPE`.
+- Nothing can write to them. Users get `Permission denied` at open; root
+  can open them, but every write fails with `EINVAL`. Seeks fail with
+  `ESPIPE`.
 
 The device doesn't pace itself. It produces bytes as fast as you read
 them (about 900 MB/s on a laptop VM). The sample rate only tells it how
@@ -54,14 +56,19 @@ sudo modprobe wavedevice
 
 Remove it with `sudo make dkms-uninstall`.
 
-**Secure Boot:** an unsigned module is refused with `Key was rejected
-by service`. Debian and Ubuntu's DKMS signs what it builds with its own
-key, `/var/lib/dkms/mok.pub`. Enroll that key once, then reboot and
-accept it in the blue MOK screen:
+**Secure Boot:** a module the kernel can't verify is refused with `Key
+was rejected by service`. DKMS signs what it builds, but you have to
+enroll its key once. The key is wherever `mok_certificate` points in
+`/etc/dkms/framework.conf` (or `framework.conf.d/`). On Debian that's
+`/var/lib/dkms/mok.pub`; Ubuntu usually uses
+`/var/lib/shim-signed/mok/MOK.der`.
 
 ```sh
-sudo mokutil --import /var/lib/dkms/mok.pub
+sudo mokutil --import /var/lib/dkms/mok.pub   # asks you to set a password
 ```
+
+Reboot. The blue MOK Manager screen appears: choose "Enroll MOK" and
+type that password. (Debian is tested; Ubuntu's path is from its docs.)
 
 ### Plain build
 
@@ -72,9 +79,10 @@ sudo insmod wavedevice.ko
 
 ### Kernel taint
 
-Loading any module you built yourself sets taint flags `O` (4096,
-out-of-tree) and, if the module is unsigned, `E` (8192). It does not
-set `P` (proprietary). See "License" for why.
+Loading any module you built yourself sets taint flag `O` (4096,
+out-of-tree). If the kernel checks signatures and can't verify this
+one, unsigned or signed with a key it hasn't enrolled, it also sets `E`
+(8192). It never sets `P` (proprietary). See "License" for why.
 
 ## Tuning
 
@@ -118,7 +126,8 @@ with open("/dev/sine", "rb", buffering=0) as f:
 ```
 
 (The ioctl number above uses the common Linux encoding: arm64, x86,
-riscv. On mips, powerpc or sparc, take it from the header.)
+riscv and most others. On alpha, mips, parisc, powerpc and sparc it
+differs; take it from the header.)
 
 ## How it works, and the homage
 
@@ -175,16 +184,27 @@ second VM:
 ```sh
 VM=wavedevice-debug CPUS=4 MEM=3 tools/vm up
 VM=wavedevice-debug tools/vm push
-limactl shell --workdir / wavedevice-debug -- sh ~/wavedevice/tools/debugkernel.sh
+limactl shell --workdir / wavedevice-debug -- \
+	sh -c 'cd ~/wavedevice && sh tools/debugkernel.sh'
 limactl shell --workdir / wavedevice-debug -- sudo systemctl reboot
 VM=wavedevice-debug make vm-check
 ```
 
-The reboot runs inside the guest because `limactl stop` hung here.
+The reboot runs inside the guest because `limactl stop` hung here. The
+script refuses to run outside a VM: it makes an unsigned debug kernel
+the default boot entry.
 
-`tools/stream.py`
-serves the devices on TCP ports 7671 to 7674 so you can listen from
-another machine.
+`tools/stream.py` serves the devices on TCP ports 7671 to 7674 so you
+can listen from another machine. It has no auth, binds `127.0.0.1`
+unless you pass `--host`, and serves 8 connections at once:
+
+```sh
+tools/stream.py                       # on the box with the module
+ffplay -f u8 -ar 48000 -ch_layout mono -nodisp tcp://127.0.0.1:7671
+```
+
+With lima, a port bound to the guest's localhost shows up on the Mac's
+localhost too. Elsewhere, tunnel it with `ssh -L 7671:127.0.0.1:7671`.
 
 ## License
 

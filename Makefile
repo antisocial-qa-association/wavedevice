@@ -22,6 +22,12 @@ dkms-uninstall:
 	dkms remove wavedevice/$(VERSION) --all
 	rm -rf $(DKMS_SRC)
 
+# Release tarball of tracked files only (build/ holds GPL checkpatch).
+dist:
+	mkdir -p build
+	git archive --prefix=wavedevice-$(VERSION)/ \
+		-o build/wavedevice-$(VERSION).tar.gz HEAD
+
 # Userspace tests of the generator core (wavegen.h). Needs a Linux-ish
 # cc with ASan/UBSan; from the Mac use `make vm-test`.
 TEST_CFLAGS := -std=gnu11 -O2 -g -Wall -Wextra -Werror \
@@ -60,4 +66,4 @@ VM_TARGETS := vm-up vm-push vm-build vm-test vm-smoke vm-devtest vm-dkms vm-chec
 $(VM_TARGETS):
 	tools/vm $(@:vm-%=%)
 
-.PHONY: modules clean dkms-install dkms-uninstall test checkpatch $(VM_TARGETS)
+.PHONY: modules clean dist dkms-install dkms-uninstall test checkpatch $(VM_TARGETS)
