@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: LicenseRef-PublicDomain */
 /*
- * wavegen.h - the oscillator. Plain integer C with no kernel dependencies,
+ * The oscillator. Plain integer C with no kernel dependencies,
  * so the module and tests/test_wavegen.c run the exact same code.
  *
  * Homage to the MOS 6581 SID: a 24-bit phase accumulator advances by

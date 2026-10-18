@@ -22,9 +22,25 @@ build/wgref: tests/wgref.c wavegen.h sine_table.h
 	mkdir -p build
 	$(CC) $(TEST_CFLAGS) -o $@ tests/wgref.c
 
+# Kernel style check with a pinned upstream checkpatch.pl (fetched once).
+# wavegen.h's userspace typedef shim trips PREFER_KERNEL_TYPES; ignored.
+CHECKPATCH_REF := v6.12.111
+CHECKPATCH := build/checkpatch/checkpatch.pl
+CHECKPATCH_URL := https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/scripts
+
+checkpatch: $(CHECKPATCH)
+	perl $(CHECKPATCH) --no-tree --strict --ignore PREFER_KERNEL_TYPES \
+		-f wavedevice.c wavegen.h uapi/wavedevice.h sine_table.h
+
+$(CHECKPATCH):
+	mkdir -p build/checkpatch
+	for f in checkpatch.pl spelling.txt const_structs.checkpatch; do \
+		curl -sSf -o build/checkpatch/$$f "$(CHECKPATCH_URL)/$$f?h=$(CHECKPATCH_REF)" || exit 1; \
+	done
+
 VM_TARGETS := vm-up vm-push vm-build vm-test vm-smoke vm-devtest vm-check \
 	vm-shell
 $(VM_TARGETS):
 	tools/vm $(@:vm-%=%)
 
-.PHONY: modules clean test $(VM_TARGETS)
+.PHONY: modules clean test checkpatch $(VM_TARGETS)

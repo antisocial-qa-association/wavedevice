@@ -190,7 +190,8 @@ static void test_amplitude(void)
 
 		wg_init(&o, s, 375, 48000, 256);
 		wg_fill(&o, buf, N);
-		lo = 255, hi = 0;
+		lo = 255;
+		hi = 0;
 		for (int i = 0; i < N; i++) {
 			lo = buf[i] < lo ? buf[i] : lo;
 			hi = buf[i] > hi ? buf[i] : hi;

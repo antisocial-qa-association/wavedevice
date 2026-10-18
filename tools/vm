@@ -12,13 +12,15 @@
 # the host tree this way.
 set -eu
 VM=${VM:-wavedevice}
+CPUS=${CPUS:-2}
+MEM=${MEM:-2}
 here=$(cd "$(dirname "$0")/.." && pwd)
 
 guest() { limactl shell --workdir / "$VM" -- "$@"; }
 
 up() {
 	limactl list -q | grep -qx "$VM" ||
-		limactl create --name="$VM" --tty=false --cpus=2 --memory=2 \
+		limactl create --name="$VM" --tty=false --cpus="$CPUS" --memory="$MEM" \
 			--mount-none template:debian-13
 	limactl list --format '{{.Status}}' "$VM" | grep -qx Running ||
 		limactl start "$VM"
