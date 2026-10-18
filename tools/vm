@@ -3,6 +3,7 @@
 #   up     create/start the VM and install build deps (idempotent)
 #   push   copy the working tree to ~/wavedevice in the guest
 #   build  push, then build with W=1 and sparse (C=1); any warning fails
+#   test   push, then run the userspace generator tests
 #   smoke  build, then run tests/smoke.sh as root
 #   shell  interactive shell in the guest's copy
 # No host mounts: the sandbox blocks virtiofs, and builds stay out of
@@ -41,6 +42,11 @@ build() {
 			{ echo "build: warnings are errors here" >&2; exit 1; }'
 }
 
+unit() {
+	push
+	guest sh -c 'make -C ~/wavedevice test'
+}
+
 smoke() {
 	build
 	guest sh -c 'cd ~/wavedevice && sudo timeout -k 10 300 sh tests/smoke.sh'
@@ -50,5 +56,6 @@ shell() { limactl shell --workdir / "$VM" -- sh -c 'cd ~/wavedevice && exec bash
 
 case ${1-} in
 up|push|build|smoke|shell) "$1" ;;
-*) echo "usage: $0 {up|push|build|smoke|shell}" >&2; exit 2 ;;
+test) unit ;;
+*) echo "usage: $0 {up|push|build|test|smoke|shell}" >&2; exit 2 ;;
 esac
