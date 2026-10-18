@@ -52,7 +52,7 @@ static int wd_param_set(const char *buf, const struct kernel_param *kp)
 		return ret;
 	if (v < p->min || v > p->max)
 		return -EINVAL;
-	p->val = v;
+	WRITE_ONCE(p->val, v);
 	return 0;
 }
 
@@ -114,12 +114,13 @@ static int wd_open(struct inode *inode, struct file *file)
 		kfree(wf);
 		return -ENOMEM;
 	}
-	/* Same lock sysfs writes take, so we see a consistent set. */
-	kernel_param_lock(THIS_MODULE);
-	freq = wd_freq.val;
-	rate = wd_rate.val;
-	amp = wd_amp.val;
-	kernel_param_unlock(THIS_MODULE);
+	/*
+	 * No lock: each param is its own sysfs write, so a set of them is
+	 * never changed atomically anyway, and wg_init rejects a bad mix.
+	 */
+	freq = READ_ONCE(wd_freq.val);
+	rate = READ_ONCE(wd_rate.val);
+	amp = READ_ONCE(wd_amp.val);
 	if (wg_init(&wf->osc, dev->shape, freq, rate, amp)) {
 		pr_warn_ratelimited("freq=%u is above rate/2 (rate=%u)\n",
 				    freq, rate);
