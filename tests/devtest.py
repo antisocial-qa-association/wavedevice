@@ -3,7 +3,10 @@
 loaded, from the module dir (needs build/wgref)."""
 import ctypes
 import errno
+import fcntl
 import mmap
+import random
+import struct
 import os
 import signal
 import subprocess
@@ -28,9 +31,34 @@ def check(cond, msg):
         print(f"FAIL: {msg}", file=sys.stderr)
 
 
-def ref(n, params=DEFAULTS):
+def ref(n, params=DEFAULTS, *retunes):
+    """Reference bytes; each retune is (freq, rate, amp, nbytes)."""
     args = ["build/wgref", *map(str, params), str(n)]
+    for r in retunes:
+        args += map(str, r)
     return subprocess.run(args, check=True, capture_output=True).stdout
+
+
+# asm-generic ioctl encoding (arm64, x86, riscv; not mips/ppc/sparc).
+def _ioc(d, nr, size):
+    return d << 30 | size << 16 | ord("~") << 8 | nr
+
+
+GET = _ioc(2, 1, 16)
+SET = _ioc(1, 2, 16)
+
+
+def get(fd):
+    return struct.unpack("4I", fcntl.ioctl(fd, GET, bytes(16)))
+
+
+def set_(fd, freq, rate, amp, flags=0):
+    """Returns 0 or the errno."""
+    try:
+        fcntl.ioctl(fd, SET, struct.pack("4I", freq, rate, amp, flags))
+        return 0
+    except OSError as e:
+        return e.errno
 
 
 def readn(n, bs, dev=DEV):
@@ -129,6 +157,77 @@ def test_params_root_only():
     _, status = os.waitpid(pid, 0)
     check(status == 0, "unprivileged user could set params or not read")
     check(getparam("freq") == DEFAULTS[1], "freq changed")
+
+
+def test_ioctl_get_set():
+    fd = os.open(DEV, os.O_RDONLY)
+    other = os.open(DEV, os.O_RDONLY)
+    try:
+        check(get(fd) == (*DEFAULTS[1:], 0), f"GET {get(fd)}")
+        a = os.read(fd, 1000)
+        check(set_(fd, 880, 48000, 64) == 0, "SET refused")
+        check(get(fd) == (880, 48000, 64, 0), f"GET after SET {get(fd)}")
+        b = os.read(fd, 1000)
+        check(a + b == ref(1000, DEFAULTS, (880, 48000, 64, 1000)),
+              "retune not phase-continuous")
+        check(get(other) == (*DEFAULTS[1:], 0), "SET leaked to another fd")
+        check(os.read(other, 2000) == ref(2000), "other fd's stream changed")
+        check(getparam("freq") == DEFAULTS[1], "SET changed module param")
+
+        for bad in ((30000, 48000, 64), (440, 48000, 257), (440, 0, 64),
+                    (0, 48000, 64), (440, 768001, 64)):
+            check(set_(fd, *bad) == errno.EINVAL, f"SET {bad} accepted")
+        check(set_(fd, 440, 48000, 64, flags=1) == errno.EINVAL,
+              "nonzero flags accepted")
+        check(get(fd) == (880, 48000, 64, 0), "failed SET changed params")
+        c = os.read(fd, 1000)
+        check(a + b + c == ref(1000, DEFAULTS, (880, 48000, 64, 2000)),
+              "failed SET disturbed stream")
+
+        for req, arg, want in ((_ioc(1, 2, 8), bytes(8), errno.ENOTTY),
+                               (_ioc(2, 9, 16), bytes(16), errno.ENOTTY),
+                               (0x5401, bytes(64), errno.ENOTTY),  # TCGETS
+                               (GET, 0, errno.EFAULT), (SET, 0, errno.EFAULT)):
+            try:
+                fcntl.ioctl(fd, req, arg)
+                check(False, f"ioctl {req:#x} succeeded")
+            except OSError as e:
+                check(e.errno == want, f"ioctl {req:#x} errno {e.errno}")
+    finally:
+        os.close(fd)
+        os.close(other)
+
+
+def test_ioctl_sweep():
+    """Many retunes between reads of odd sizes; must match exactly."""
+    rnd = random.Random(7)
+    for name, shape in SHAPES.items():
+        fd = os.open("/dev/" + name, os.O_RDONLY)
+        got = bytearray(os.read(fd, 333))
+        segs = []
+        for _ in range(100):
+            rate = rnd.choice((8000, 22050, 44100, 48000, 96000))
+            seg = (rnd.randint(1, rate // 2), rate, rnd.randint(0, 256),
+                   rnd.randint(1, 9000))
+            check(set_(fd, *seg[:3]) == 0, f"SET {seg}")
+            got += os.read(fd, seg[3])
+            segs.append(seg)
+        os.close(fd)
+        check(bytes(got) == ref(333, (shape, *DEFAULTS[1:]), *segs),
+              f"/dev/{name} sweep differs from reference")
+
+
+def test_ioctl_unprivileged_and_shape():
+    pid = os.fork()
+    if pid == 0:
+        os.setgid(65534)
+        os.setuid(65534)
+        fd = os.open("/dev/square", os.O_RDONLY)
+        ok = set_(fd, 1000, 48000, 256) == 0 and \
+            os.read(fd, 48) == ref(48, (3, 1000, 48000, 256))
+        os._exit(0 if ok else 1)
+    _, status = os.waitpid(pid, 0)
+    check(status == 0, "nobody can't retune own fd, or shape changed")
 
 
 def test_full_and_zero_reads():

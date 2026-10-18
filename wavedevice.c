@@ -9,7 +9,8 @@
  * a signal. Output is unsigned 8-bit mono.
  *
  * Module params freq, rate and amp set what each open() starts with;
- * changing them never disturbs streams already open.
+ * changing them never disturbs streams already open. A program can
+ * retune its own fd with the ioctls in uapi/wavedevice.h.
  *
  * Public domain. See LICENSE.
  */
@@ -25,6 +26,7 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 
+#include "uapi/wavedevice.h"
 #include "wavegen.h"
 
 /* Generate this much at a time, then copy it out to userspace. */
@@ -84,8 +86,9 @@ struct wd_dev {
 
 /* Per open file. Threads or forks sharing the fd share one stream. */
 struct wd_file {
-	struct mutex lock;	/* serializes readers: osc and buf */
+	struct mutex lock;	/* serializes readers and ioctls */
 	struct wg_osc osc;
+	struct wavedevice_params params;	/* what osc was set from */
 	u8 *buf;		/* WD_CHUNK bytes of scratch */
 };
 
@@ -124,6 +127,9 @@ static int wd_open(struct inode *inode, struct file *file)
 		kfree(wf);
 		return -EINVAL;
 	}
+	wf->params.freq = freq;
+	wf->params.rate = rate;
+	wf->params.amp = amp;
 	mutex_init(&wf->lock);
 	file->private_data = wf;
 	return 0;
@@ -183,11 +189,48 @@ static ssize_t wd_read(struct file *file, char __user *ubuf, size_t count,
 	return done ? done : err;
 }
 
+static long wd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	struct wd_file *wf = file->private_data;
+	void __user *uarg = (void __user *)arg;
+	struct wavedevice_params p;
+	int ret = 0;
+
+	switch (cmd) {
+	case WAVEDEVICE_GET_PARAMS:
+		if (mutex_lock_interruptible(&wf->lock))
+			return -ERESTARTSYS;
+		p = wf->params;		/* kzalloc'd, so flags and padding are 0 */
+		mutex_unlock(&wf->lock);
+		if (copy_to_user(uarg, &p, sizeof(p)))
+			return -EFAULT;
+		return 0;
+
+	case WAVEDEVICE_SET_PARAMS:
+		if (copy_from_user(&p, uarg, sizeof(p)))
+			return -EFAULT;
+		if (p.flags)
+			return -EINVAL;
+		if (mutex_lock_interruptible(&wf->lock))
+			return -ERESTARTSYS;
+		if (wg_set(&wf->osc, p.freq, p.rate, p.amp))
+			ret = -EINVAL;
+		else
+			wf->params = p;
+		mutex_unlock(&wf->lock);
+		return ret;
+	}
+	return -ENOTTY;
+}
+
 static const struct file_operations wd_fops = {
 	.owner		= THIS_MODULE,	/* open fds pin the module */
 	.open		= wd_open,
 	.release	= wd_release,
 	.read		= wd_read,
+	.unlocked_ioctl	= wd_ioctl,
+	/* All-__u32 struct: same layout for 32-bit callers. */
+	.compat_ioctl	= compat_ptr_ioctl,
 	/* No .write: write() gets -EINVAL, even for root. */
 };
 
