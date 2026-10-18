@@ -49,6 +49,18 @@ static void test_init_validation(void)
 	CHECK(wg_init(&o, WG_SINE, 440, 48000, 257) != 0, "amp > 256");
 	CHECK(wg_init(&o, WG_NSHAPES, 440, 48000, 128) != 0, "bad shape");
 	CHECK(wg_init(&o, (unsigned int)-1, 440, 48000, 128) != 0, "bad shape");
+
+	/* 5 * 2^24 / 48000 = 1747.63: rounds up, truncation would not. */
+	CHECK(wg_init(&o, WG_SINE, 5, 48000, 128) == 0, "5 Hz");
+	CHECK(o.step == 1748, "step %u", o.step);
+}
+
+static void test_scale(void)
+{
+	CHECK(wg_scale(0, 255) == 1, "%d", wg_scale(0, 255));
+	CHECK(wg_scale(255, 256) == 255, "%d", wg_scale(255, 256));
+	CHECK(wg_scale(0, 256) == 0, "%d", wg_scale(0, 256));
+	CHECK(wg_scale(200, 0) == 128, "%d", wg_scale(200, 0));
 }
 
 /* 375 Hz at 48 kHz is step 2^17: exactly 128 samples per period. */
@@ -165,7 +177,8 @@ static void test_phase_stays_24bit(void)
 	static u8 buf[N];
 	struct wg_osc o;
 
-	wg_init(&o, WG_SAWTOOTH, 24000, 48000, 256);
+	/* Not a power of two, so wraps don't land phase on 0 by luck. */
+	wg_init(&o, WG_SAWTOOTH, 23999, 48000, 256);
 	for (int i = 0; i < 300; i++) {
 		wg_fill(&o, buf, N);
 		CHECK(o.phase < 1u << 24, "phase %#x", o.phase);
@@ -181,6 +194,7 @@ int main(void)
 {
 	test_table();
 	test_init_validation();
+	test_scale();
 	test_exact_period();
 	test_split_continuity();
 	test_frequency();
