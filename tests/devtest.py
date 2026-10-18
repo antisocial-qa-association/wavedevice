@@ -14,6 +14,8 @@ import time
 import numpy as np
 
 DEV = "/dev/sine"
+SHAPES = {"sine": 0, "sawtooth": 1, "triangle": 2, "square": 3}
+PARAMS = "/sys/module/wavedevice/parameters/"
 # Defaults the module ships with (shape, freq, rate, amp).
 DEFAULTS = (0, 440, 48000, 128)
 failures = 0
@@ -50,6 +52,83 @@ def test_matches_reference():
     want = ref(n)
     for bs in (1, 7, 4095, 4096, 4097, 65536, 1 << 20):
         check(readn(n, bs) == want, f"bs={bs} differs from reference")
+
+
+def test_all_shapes_match_reference():
+    n = 100_000
+    for name, shape in SHAPES.items():
+        want = ref(n, (shape, *DEFAULTS[1:]))
+        for bs in (1, 4097):
+            check(readn(n, bs, "/dev/" + name) == want,
+                  f"/dev/{name} bs={bs} differs from reference")
+        st = os.stat("/dev/" + name)
+        check(st.st_mode & 0o777 == 0o444, f"/dev/{name} mode {st.st_mode:o}")
+
+
+def getparam(name):
+    with open(PARAMS + name) as f:
+        return int(f.read())
+
+
+def setparam(name, val):
+    """Returns 0 or the errno the write failed with."""
+    try:
+        with open(PARAMS + name, "w") as f:
+            f.write(str(val))
+        return 0
+    except OSError as e:
+        return e.errno
+
+
+def test_params():
+    try:
+        old = os.open(DEV, os.O_RDONLY)
+        check(setparam("freq", 1000) == 0, "set freq")
+        check(setparam("rate", 44100) == 0, "set rate")
+        check(setparam("amp", 64) == 0, "set amp")
+        check(readn(5000, 4096, "/dev/square") == ref(5000, (3, 1000, 44100, 64)),
+              "new open ignores params")
+        check(os.read(old, 5000) == ref(5000), "params disturbed open stream")
+        os.close(old)
+
+        for name, bad in (("freq", 0), ("freq", 384001), ("rate", 0),
+                          ("rate", 768001), ("amp", 257), ("amp", -1),
+                          ("freq", "loud"), ("rate", "\n")):
+            before = getparam(name)
+            check(setparam(name, bad) == errno.EINVAL, f"{name}={bad!r} accepted")
+            check(getparam(name) == before, f"{name}={bad!r} changed value")
+
+        # Each value in range, but not together: open() refuses.
+        check(setparam("rate", 8000) == 0 and setparam("freq", 4001) == 0,
+              "in-range values refused")
+        try:
+            os.close(os.open(DEV, os.O_RDONLY))
+            check(False, "open with freq > rate/2 succeeded")
+        except OSError as e:
+            check(e.errno == errno.EINVAL, f"bad combo open errno {e.errno}")
+        check(setparam("freq", 4000) == 0, "nyquist freq")
+        os.close(os.open(DEV, os.O_RDONLY))
+    finally:
+        for name, val in zip(("freq", "rate", "amp"), DEFAULTS[1:]):
+            setparam("freq", 1)  # always valid against any rate
+            setparam(name, val)
+        setparam("freq", DEFAULTS[1])
+    check([getparam(n) for n in ("freq", "rate", "amp")] == list(DEFAULTS[1:]),
+          "params not restored")
+
+
+def test_params_root_only():
+    pid = os.fork()
+    if pid == 0:
+        os.setgid(65534)
+        os.setuid(65534)
+        rc = setparam("freq", 1000)
+        # nobody can still read and play the devices
+        ok = rc == errno.EACCES and len(readn(10, 10)) == 10
+        os._exit(0 if ok else 1)
+    _, status = os.waitpid(pid, 0)
+    check(status == 0, "unprivileged user could set params or not read")
+    check(getparam("freq") == DEFAULTS[1], "freq changed")
 
 
 def test_full_and_zero_reads():

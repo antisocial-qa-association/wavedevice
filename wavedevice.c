@@ -3,9 +3,13 @@
  * wavedevice - /dev/sine and friends, for people who wanted /dev/urandom
  * but in tune.
  *
- * Each open() gets its own oscillator starting at phase 0, so every
- * reader hears a whole wave from the top. Reads never end and never come
- * up short except on a signal. Output is unsigned 8-bit mono.
+ * /dev/sine, /dev/sawtooth, /dev/triangle, /dev/square. Each open() gets
+ * its own oscillator starting at phase 0, so every reader hears a whole
+ * wave from the top. Reads never end and never come up short except on
+ * a signal. Output is unsigned 8-bit mono.
+ *
+ * Module params freq, rate and amp set what each open() starts with;
+ * changing them never disturbs streams already open.
  *
  * Public domain. See LICENSE.
  */
@@ -14,6 +18,7 @@
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/mutex.h>
 #include <linux/sched.h>
 #include <linux/sched/signal.h>
@@ -24,6 +29,53 @@
 
 /* Generate this much at a time, then copy it out to userspace. */
 #define WD_CHUNK	PAGE_SIZE
+
+/*
+ * Params are range-checked on write. Whether freq fits under rate / 2 is
+ * only checked at open(), so they can be changed in either order.
+ */
+struct wd_param {
+	unsigned int val;
+	unsigned int min, max;
+};
+
+static int wd_param_set(const char *buf, const struct kernel_param *kp)
+{
+	struct wd_param *p = kp->arg;
+	unsigned int v;
+	int ret;
+
+	ret = kstrtouint(buf, 0, &v);
+	if (ret)
+		return ret;
+	if (v < p->min || v > p->max)
+		return -EINVAL;
+	p->val = v;
+	return 0;
+}
+
+static int wd_param_get(char *buf, const struct kernel_param *kp)
+{
+	const struct wd_param *p = kp->arg;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n", p->val);
+}
+
+static const struct kernel_param_ops wd_param_ops = {
+	.set = wd_param_set,
+	.get = wd_param_get,
+};
+
+static struct wd_param wd_freq = { 440, 1, WG_RATE_MAX / 2 };
+static struct wd_param wd_rate = { 48000, 1, WG_RATE_MAX };
+static struct wd_param wd_amp = { 128, 0, WG_AMP_MAX };
+
+module_param_cb(freq, &wd_param_ops, &wd_freq, 0644);
+MODULE_PARM_DESC(freq, "Hz for new opens, 1..rate/2 (default 440)");
+module_param_cb(rate, &wd_param_ops, &wd_rate, 0644);
+MODULE_PARM_DESC(rate, "Samples/s the reader plays at (default 48000)");
+module_param_cb(amp, &wd_param_ops, &wd_amp, 0644);
+MODULE_PARM_DESC(amp, "Amplitude 0..256, 256 = full scale (default 128)");
 
 struct wd_dev {
 	struct miscdevice misc;
@@ -43,6 +95,7 @@ static int wd_open(struct inode *inode, struct file *file)
 	struct wd_dev *dev = container_of(file->private_data,
 					  struct wd_dev, misc);
 	struct wd_file *wf;
+	unsigned int freq, rate, amp;
 	int ret;
 
 	ret = nonseekable_open(inode, file);	/* lseek() gets -ESPIPE */
@@ -58,7 +111,15 @@ static int wd_open(struct inode *inode, struct file *file)
 		kfree(wf);
 		return -ENOMEM;
 	}
-	if (wg_init(&wf->osc, dev->shape, 440, 48000, 128)) {
+	/* Same lock sysfs writes take, so we see a consistent set. */
+	kernel_param_lock(THIS_MODULE);
+	freq = wd_freq.val;
+	rate = wd_rate.val;
+	amp = wd_amp.val;
+	kernel_param_unlock(THIS_MODULE);
+	if (wg_init(&wf->osc, dev->shape, freq, rate, amp)) {
+		pr_warn_ratelimited("freq=%u is above rate/2 (rate=%u)\n",
+				    freq, rate);
 		kfree(wf->buf);
 		kfree(wf);
 		return -EINVAL;
@@ -134,24 +195,46 @@ static const struct file_operations wd_fops = {
  * A misc device is a char device with major 10 and a minor picked at
  * register time. udev/devtmpfs creates /dev/<name> with .mode for us.
  */
-static struct wd_dev wd_sine = {
-	.misc = {
-		.minor	= MISC_DYNAMIC_MINOR,
-		.name	= "sine",
-		.fops	= &wd_fops,
-		.mode	= 0444,
-	},
-	.shape = WG_SINE,
+#define WD_DEV(_name, _shape) {			\
+	.misc = {					\
+		.minor	= MISC_DYNAMIC_MINOR,		\
+		.name	= _name,			\
+		.fops	= &wd_fops,			\
+		.mode	= 0444,				\
+	},						\
+	.shape = _shape,				\
+}
+
+static struct wd_dev wd_devs[] = {
+	WD_DEV("sine", WG_SINE),
+	WD_DEV("sawtooth", WG_SAWTOOTH),
+	WD_DEV("triangle", WG_TRIANGLE),
+	WD_DEV("square", WG_SQUARE),
 };
 
 static int __init wd_init(void)
 {
-	return misc_register(&wd_sine.misc);
+	int i, ret;
+
+	for (i = 0; i < ARRAY_SIZE(wd_devs); i++) {
+		ret = misc_register(&wd_devs[i].misc);
+		if (ret) {
+			pr_err("can't register /dev/%s: %d\n",
+			       wd_devs[i].misc.name, ret);
+			while (i--)
+				misc_deregister(&wd_devs[i].misc);
+			return ret;
+		}
+	}
+	return 0;
 }
 
 static void __exit wd_exit(void)
 {
-	misc_deregister(&wd_sine.misc);
+	int i = ARRAY_SIZE(wd_devs);
+
+	while (i--)
+		misc_deregister(&wd_devs[i].misc);
 }
 
 module_init(wd_init);
