@@ -18,7 +18,12 @@ build/test_wavegen: tests/test_wavegen.c wavegen.h sine_table.h
 	mkdir -p build
 	$(CC) $(TEST_CFLAGS) -o $@ tests/test_wavegen.c
 
-VM_TARGETS := vm-up vm-push vm-build vm-test vm-smoke vm-shell
+build/wgref: tests/wgref.c wavegen.h sine_table.h
+	mkdir -p build
+	$(CC) $(TEST_CFLAGS) -o $@ tests/wgref.c
+
+VM_TARGETS := vm-up vm-push vm-build vm-test vm-smoke vm-devtest vm-check \
+	vm-shell
 $(VM_TARGETS):
 	tools/vm $(@:vm-%=%)
 

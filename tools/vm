@@ -5,6 +5,8 @@
 #   build  push, then build with W=1 and sparse (C=1); any warning fails
 #   test   push, then run the userspace generator tests
 #   smoke  build, then run tests/smoke.sh as root
+#   devtest build, then run tests/devtest.sh (device behavior) as root
+#   check  test + smoke + devtest
 #   shell  interactive shell in the guest's copy
 # No host mounts: the sandbox blocks virtiofs, and builds stay out of
 # the host tree this way.
@@ -52,10 +54,19 @@ smoke() {
 	guest sh -c 'cd ~/wavedevice && sudo timeout -k 10 300 sh tests/smoke.sh'
 }
 
+devtest() {
+	build
+	# Built as the guest user so root never owns files push must delete.
+	guest sh -c 'make -C ~/wavedevice build/wgref &&
+		cd ~/wavedevice && sudo timeout -k 10 300 sh tests/devtest.sh'
+}
+
+check() { unit; smoke; devtest; }
+
 shell() { limactl shell --workdir / "$VM" -- sh -c 'cd ~/wavedevice && exec bash -l'; }
 
 case ${1-} in
-up|push|build|smoke|shell) "$1" ;;
+up|push|build|smoke|devtest|check|shell) "$1" ;;
 test) unit ;;
-*) echo "usage: $0 {up|push|build|test|smoke|shell}" >&2; exit 2 ;;
+*) echo "usage: $0 {up|push|build|test|smoke|devtest|check|shell}" >&2; exit 2 ;;
 esac
