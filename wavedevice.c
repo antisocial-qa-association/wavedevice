@@ -285,6 +285,7 @@ module_init(wd_init);
 module_exit(wd_exit);
 
 MODULE_DESCRIPTION("Endless periodic waveforms as character devices");
+MODULE_VERSION("0.1.0");	/* keep in step with dkms.conf */
 /*
  * The source is public domain (see LICENSE). The kernel has no tag for
  * that; this string is the closest true statement it accepts without

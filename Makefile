@@ -5,6 +5,23 @@ KDIR ?= /lib/modules/$(shell uname -r)/build
 modules clean:
 	$(MAKE) -C $(KDIR) M=$(CURDIR) $@
 
+# DKMS: rebuilds the module for every kernel you install. As root:
+#   make dkms-install    copy source to /usr/src, build, install
+#   make dkms-uninstall  remove from every kernel and /usr/src
+VERSION := $(shell sed -n 's/^PACKAGE_VERSION="\(.*\)"/\1/p' dkms.conf)
+DKMS_SRC := /usr/src/wavedevice-$(VERSION)
+DKMS_FILES := Kbuild Makefile dkms.conf LICENSE wavedevice.c wavegen.h \
+	sine_table.h uapi/wavedevice.h
+
+dkms-install:
+	install -d $(DKMS_SRC)/uapi
+	for f in $(DKMS_FILES); do install -m 644 $$f $(DKMS_SRC)/$$f; done
+	dkms install wavedevice/$(VERSION)
+
+dkms-uninstall:
+	dkms remove wavedevice/$(VERSION) --all
+	rm -rf $(DKMS_SRC)
+
 # Userspace tests of the generator core (wavegen.h). Needs a Linux-ish
 # cc with ASan/UBSan; from the Mac use `make vm-test`.
 TEST_CFLAGS := -std=gnu11 -O2 -g -Wall -Wextra -Werror \
@@ -38,9 +55,9 @@ $(CHECKPATCH):
 		curl -sSf -o build/checkpatch/$$f "$(CHECKPATCH_URL)/$$f?h=$(CHECKPATCH_REF)" || exit 1; \
 	done
 
-VM_TARGETS := vm-up vm-push vm-build vm-test vm-smoke vm-devtest vm-check \
+VM_TARGETS := vm-up vm-push vm-build vm-test vm-smoke vm-devtest vm-dkms vm-check \
 	vm-shell
 $(VM_TARGETS):
 	tools/vm $(@:vm-%=%)
 
-.PHONY: modules clean test checkpatch $(VM_TARGETS)
+.PHONY: modules clean dkms-install dkms-uninstall test checkpatch $(VM_TARGETS)
