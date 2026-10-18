@@ -42,19 +42,31 @@ struct wg_osc {
 	u8 shape;	/* enum wg_shape */
 };
 
-/* Returns 0, or -1 if any argument is out of range (o is untouched). */
-static inline int wg_init(struct wg_osc *o, unsigned int shape,
-			  u32 freq, u32 rate, u32 amp)
+/*
+ * Retune without touching phase, so the wave carries on from where it
+ * is: no click. Returns 0, or -1 if out of range (o is untouched).
+ */
+static inline int wg_set(struct wg_osc *o, u32 freq, u32 rate, u32 amp)
 {
-	if (shape >= WG_NSHAPES || rate == 0 || rate > WG_RATE_MAX ||
+	if (rate == 0 || rate > WG_RATE_MAX ||
 	    freq == 0 || freq > rate / 2 || amp > WG_AMP_MAX)
 		return -1;
-	o->phase = 0;
 	/* Rounded to nearest. freq <= rate / 2 keeps this <= 2^23. */
 	o->step = (u32)wg_div_u64(((u64)freq << WG_PHASE_BITS) + rate / 2,
 				  rate);
 	o->amp = amp;
-	o->shape = shape;
+	return 0;
+}
+
+/* Start at phase 0. Returns 0, or -1 if out of range (o is untouched). */
+static inline int wg_init(struct wg_osc *o, unsigned int shape,
+			  u32 freq, u32 rate, u32 amp)
+{
+	struct wg_osc n = { .phase = 0, .shape = shape };
+
+	if (shape >= WG_NSHAPES || wg_set(&n, freq, rate, amp))
+		return -1;
+	*o = n;
 	return 0;
 }
 

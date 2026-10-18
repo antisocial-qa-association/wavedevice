@@ -55,6 +55,35 @@ static void test_init_validation(void)
 	CHECK(o.step == 1748, "step %u", o.step);
 }
 
+static int osc_eq(const struct wg_osc *a, const struct wg_osc *b)
+{
+	return a->phase == b->phase && a->step == b->step &&
+	       a->amp == b->amp && a->shape == b->shape;
+}
+
+static void test_retune(void)
+{
+	struct wg_osc o, before;
+	u8 buf[1000];
+
+	wg_init(&o, WG_SAWTOOTH, 441, 44100, 256);
+	wg_fill(&o, buf, sizeof(buf));
+	before = o;
+	CHECK(wg_set(&o, 30000, 48000, 128) != 0, "above nyquist accepted");
+	CHECK(wg_set(&o, 440, 48000, 300) != 0, "amp 300 accepted");
+	CHECK(osc_eq(&o, &before), "failed set changed osc");
+	CHECK(wg_set(&o, 880, 48000, 64) == 0, "valid set refused");
+	CHECK(o.phase == before.phase, "retune moved phase");
+	CHECK(o.shape == WG_SAWTOOTH, "retune changed shape");
+	CHECK(o.amp == 64, "amp %u", o.amp);
+	wg_init(&before, WG_SINE, 880, 48000, 64);
+	CHECK(o.step == before.step, "step %u vs %u", o.step, before.step);
+
+	before = o;
+	CHECK(wg_init(&o, WG_NSHAPES, 440, 48000, 128) != 0, "bad shape");
+	CHECK(osc_eq(&o, &before), "failed init changed osc");
+}
+
 static void test_scale(void)
 {
 	CHECK(wg_scale(0, 255) == 1, "%d", wg_scale(0, 255));
@@ -195,6 +224,7 @@ int main(void)
 	test_table();
 	test_init_validation();
 	test_scale();
+	test_retune();
 	test_exact_period();
 	test_split_continuity();
 	test_frequency();
