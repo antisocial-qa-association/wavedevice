@@ -2,7 +2,7 @@
 /*
  * Reference stream from the userspace build of wavegen.h, for comparing
  * against the device byte for byte.
- *   wgref SHAPE FREQ RATE AMP NBYTES [FREQ RATE AMP NBYTES]... > out
+ *   wgref SHAPE FREQ RATE AMP PW NBYTES [FREQ RATE AMP PW NBYTES]... > out
  * Each extra group retunes with wg_set (phase kept), like the ioctl.
  */
 #include <stdio.h>
@@ -21,17 +21,18 @@ int main(int argc, char **argv)
 	struct wg_osc o;
 	int g;
 
-	if (argc < 6 || (argc - 2) % 4) {
-		fputs("usage: wgref SHAPE FREQ RATE AMP NBYTES [FREQ RATE AMP NBYTES]...\n",
+	if (argc < 7 || (argc - 2) % 5) {
+		fputs("usage: wgref SHAPE FREQ RATE AMP PW NBYTES [FREQ RATE AMP PW NBYTES]...\n",
 		      stderr);
 		return 2;
 	}
-	for (g = 2; g < argc; g += 4) {
-		unsigned long n = arg(argv[g + 3]);
+	for (g = 2; g < argc; g += 5) {
+		unsigned long n = arg(argv[g + 4]);
 		int bad = g == 2 ?
 			wg_init(&o, arg(argv[1]), arg(argv[g]), arg(argv[g + 1]),
-				arg(argv[g + 2])) :
-			wg_set(&o, arg(argv[g]), arg(argv[g + 1]), arg(argv[g + 2]));
+				arg(argv[g + 2]), arg(argv[g + 3])) :
+			wg_set(&o, arg(argv[g]), arg(argv[g + 1]), arg(argv[g + 2]),
+			       arg(argv[g + 3]));
 
 		if (bad) {
 			fputs("wgref: invalid parameters\n", stderr);

@@ -4,7 +4,8 @@
  * without restarting its wave. Copy this header into your program.
  *
  * Changes affect only the fd you call them on (and anything sharing
- * it). Shape is fixed per device. Retuning keeps phase, so there's no
+ * it). Shape is fixed per device; fields a shape doesn't use, like pw
+ * on a sine, are accepted and ignored. Retuning keeps phase, so there's no
  * click. Out-of-range values get EINVAL and change nothing.
  */
 #ifndef _UAPI_WAVEDEVICE_H
@@ -17,6 +18,7 @@ struct wavedevice_params {
 	__u32 freq;	/* Hz, 1..rate/2 */
 	__u32 rate;	/* samples/s you play at, 1..768000 */
 	__u32 amp;	/* 0..256, 256 is full scale */
+	__u32 pw;	/* 0..4096 pulse width, 2048 is 50%; square only */
 	__u32 flags;	/* must be 0 */
 };
 

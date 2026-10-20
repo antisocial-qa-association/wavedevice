@@ -16,7 +16,8 @@ You'll hear it.
 ## What you get
 
 - Four character devices. Each one is an endless stream
-  of unsigned 8-bit mono samples, centered on 128.
+  of unsigned 8-bit mono samples, centered on 128. The square has a
+  pulse width.
 - Defaults: 440 Hz at 48000 samples/s, amplitude 128 of 256 (about
   -6 dBFS). Full scale square waves hurt; that's why the default is half.
 - Each `open()` gets its own wave, starting from phase 0. Each fd is a 
@@ -73,7 +74,7 @@ Defaults are set as module parameters. Streams that are already
 open aren't affected if these change.
 
 ```
-sudo modprobe wavedevice freq=1000 rate=44100 amp=64
+sudo modprobe wavedevice freq=1000 rate=44100 amp=64 pw=1024
 echo 220 | sudo tee /sys/module/wavedevice/parameters/freq
 ```
 
@@ -82,6 +83,7 @@ echo 220 | sudo tee /sys/module/wavedevice/parameters/freq
 | `freq` | 1 .. rate/2  | 440     |
 | `rate` | 1 .. 768000  | 48000   |
 | `amp`  | 0 .. 256     | 128     |
+| `pw`   | 0 .. 4096    | 2048    |
 
 Invalid parameters get refused. `freq` can be above `rate/2` for the
 time between writes. `open()` in that state fails with `EINVAL`, and
@@ -104,11 +106,34 @@ to change an fd's shape.
 ```
 # sweep.py:  python3 sweep.py | aplay -f U8 -r 48000
 import fcntl, struct, sys
-SET = 1 << 30 | 16 << 16 | ord("~") << 8 | 2   # WAVEDEVICE_SET_PARAMS
+SET = 1 << 30 | 20 << 16 | ord("~") << 8 | 2   # WAVEDEVICE_SET_PARAMS
 with open("/dev/sine", "rb", buffering=0) as f:
     for hz in range(200, 2000, 10):             # a 3.6 s upward sweep
-        fcntl.ioctl(f, SET, struct.pack("4I", hz, 48000, 128, 0))
+        fcntl.ioctl(f, SET, struct.pack("5I", hz, 48000, 128, 2048, 0))
         sys.stdout.buffer.write(f.read(960))    # 20 ms at 48 kHz
+```
+
+### Pulse width
+
+`/dev/square` has a pulse width, `pw`, in the SID's 12 bits: 2048 is
+the classic 50% square, 1024 is a thin 25% pulse, 0 and 4096 are
+flat (all low, all high). Set it with the module parameter for new
+opens, or with the `pw` field of the ioctl to sweep it while the
+wave runs. Sweeping it is PWM, and it sounds like a chorus.
+
+The other three devices accept `pw` and ignore it, the way a SID
+voice ignores the pulse register while it plays a sawtooth. Code
+doesn't need to care which device it opened.
+
+```
+# pwm.py:  python3 pwm.py | aplay -f U8 -r 48000
+import fcntl, struct, sys
+SET = 1 << 30 | 20 << 16 | ord("~") << 8 | 2
+with open("/dev/square", "rb", buffering=0) as f:
+    for i in range(500):                        # a 5 s slow sweep
+        pw = 2048 + int(1900 * abs((i % 100) / 50 - 1) - 950)
+        fcntl.ioctl(f, SET, struct.pack("5I", 110, 48000, 128, pw, 0))
+        sys.stdout.buffer.write(f.read(480))    # 10 ms at 48 kHz
 ```
 
 (The ioctl number above uses the common Linux encoding: arm64, x86,
@@ -121,7 +146,8 @@ The oscillator is... approximately a 6581 SID. Very approximately.
 A 24-bit phase accumulator ticks by `freq * 2^24 / rate` every
 sample, and the top 8 bits become the output. Sawtooth is those bits
 as they are. Triangle is the SID trick of XORing them with their own
-top bit. Square is the top bit. The sine is fake. It's just a
+top bit. Square is high while the phase is under the pulse width; at 2048
+that's the top bit, inverted. The sine is fake. It's just a
 a 256-entry table generated with [`tools/gensine.py`](tools/gensine.py).
 
 It's integer-only, because kernels don't do floating point. It doesn't

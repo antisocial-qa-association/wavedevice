@@ -39,19 +39,19 @@ static void test_init_validation(void)
 {
 	struct wg_osc o;
 
-	CHECK(wg_init(&o, WG_SINE, 440, 48000, 128) == 0, "default");
-	CHECK(wg_init(&o, WG_SINE, 24000, 48000, 128) == 0, "nyquist ok");
-	CHECK(wg_init(&o, WG_SINE, 24001, 48000, 128) != 0, "above nyquist");
-	CHECK(wg_init(&o, WG_SINE, 0, 48000, 128) != 0, "zero freq");
-	CHECK(wg_init(&o, WG_SINE, 1, 0, 128) != 0, "zero rate");
-	CHECK(wg_init(&o, WG_SINE, 1, WG_RATE_MAX + 1, 128) != 0, "rate max");
-	CHECK(wg_init(&o, WG_SINE, 1, WG_RATE_MAX, 256) == 0, "rate max ok");
-	CHECK(wg_init(&o, WG_SINE, 440, 48000, 257) != 0, "amp > 256");
-	CHECK(wg_init(&o, WG_NSHAPES, 440, 48000, 128) != 0, "bad shape");
-	CHECK(wg_init(&o, (unsigned int)-1, 440, 48000, 128) != 0, "bad shape");
+	CHECK(wg_init(&o, WG_SINE, 440, 48000, 128, WG_PW_DEFAULT) == 0, "default");
+	CHECK(wg_init(&o, WG_SINE, 24000, 48000, 128, WG_PW_DEFAULT) == 0, "nyquist ok");
+	CHECK(wg_init(&o, WG_SINE, 24001, 48000, 128, WG_PW_DEFAULT) != 0, "above nyquist");
+	CHECK(wg_init(&o, WG_SINE, 0, 48000, 128, WG_PW_DEFAULT) != 0, "zero freq");
+	CHECK(wg_init(&o, WG_SINE, 1, 0, 128, WG_PW_DEFAULT) != 0, "zero rate");
+	CHECK(wg_init(&o, WG_SINE, 1, WG_RATE_MAX + 1, 128, WG_PW_DEFAULT) != 0, "rate max");
+	CHECK(wg_init(&o, WG_SINE, 1, WG_RATE_MAX, 256, WG_PW_DEFAULT) == 0, "rate max ok");
+	CHECK(wg_init(&o, WG_SINE, 440, 48000, 257, WG_PW_DEFAULT) != 0, "amp > 256");
+	CHECK(wg_init(&o, WG_NSHAPES, 440, 48000, 128, WG_PW_DEFAULT) != 0, "bad shape");
+	CHECK(wg_init(&o, (unsigned int)-1, 440, 48000, 128, WG_PW_DEFAULT) != 0, "bad shape");
 
 	/* 5 * 2^24 / 48000 = 1747.63: rounds up, truncation would not. */
-	CHECK(wg_init(&o, WG_SINE, 5, 48000, 128) == 0, "5 Hz");
+	CHECK(wg_init(&o, WG_SINE, 5, 48000, 128, WG_PW_DEFAULT) == 0, "5 Hz");
 	CHECK(o.step == 1748, "step %u", o.step);
 }
 
@@ -66,21 +66,21 @@ static void test_retune(void)
 	struct wg_osc o, before;
 	u8 buf[1000];
 
-	wg_init(&o, WG_SAWTOOTH, 441, 44100, 256);
+	wg_init(&o, WG_SAWTOOTH, 441, 44100, 256, WG_PW_DEFAULT);
 	wg_fill(&o, buf, sizeof(buf));
 	before = o;
-	CHECK(wg_set(&o, 30000, 48000, 128) != 0, "above nyquist accepted");
-	CHECK(wg_set(&o, 440, 48000, 300) != 0, "amp 300 accepted");
+	CHECK(wg_set(&o, 30000, 48000, 128, WG_PW_DEFAULT) != 0, "above nyquist accepted");
+	CHECK(wg_set(&o, 440, 48000, 300, WG_PW_DEFAULT) != 0, "amp 300 accepted");
 	CHECK(osc_eq(&o, &before), "failed set changed osc");
-	CHECK(wg_set(&o, 880, 48000, 64) == 0, "valid set refused");
+	CHECK(wg_set(&o, 880, 48000, 64, WG_PW_DEFAULT) == 0, "valid set refused");
 	CHECK(o.phase == before.phase, "retune moved phase");
 	CHECK(o.shape == WG_SAWTOOTH, "retune changed shape");
 	CHECK(o.amp == 64, "amp %u", o.amp);
-	wg_init(&before, WG_SINE, 880, 48000, 64);
+	wg_init(&before, WG_SINE, 880, 48000, 64, WG_PW_DEFAULT);
 	CHECK(o.step == before.step, "step %u vs %u", o.step, before.step);
 
 	before = o;
-	CHECK(wg_init(&o, WG_NSHAPES, 440, 48000, 128) != 0, "bad shape");
+	CHECK(wg_init(&o, WG_NSHAPES, 440, 48000, 128, WG_PW_DEFAULT) != 0, "bad shape");
 	CHECK(osc_eq(&o, &before), "failed init changed osc");
 }
 
@@ -102,7 +102,7 @@ static void test_exact_period(void)
 	for (unsigned int s = 0; s < WG_NSHAPES; s++) {
 		long sum = 0;
 
-		CHECK(wg_init(&o, s, 375, 48000, 256) == 0, "%s", names[s]);
+		CHECK(wg_init(&o, s, 375, 48000, 256, WG_PW_DEFAULT) == 0, "%s", names[s]);
 		CHECK(o.step == 1u << 17, "%s step %u", names[s], o.step);
 		wg_fill(&o, buf, N);
 		for (int i = 0; i + P < N; i++)
@@ -128,8 +128,8 @@ static void test_split_continuity(void)
 	for (unsigned int s = 0; s < WG_NSHAPES; s++) {
 		size_t off = 0;
 
-		wg_init(&a, s, 441, 44100, 200);
-		wg_init(&b, s, 441, 44100, 200);
+		wg_init(&a, s, 441, 44100, 200, WG_PW_DEFAULT);
+		wg_init(&b, s, 441, 44100, 200, WG_PW_DEFAULT);
 		wg_fill(&a, whole, N);
 		while (off < N) {
 			size_t n;
@@ -154,7 +154,7 @@ static void test_frequency(void)
 	struct wg_osc o;
 	int rising = 0;
 
-	wg_init(&o, WG_SINE, 440, 48000, 256);
+	wg_init(&o, WG_SINE, 440, 48000, 256, WG_PW_DEFAULT);
 	wg_fill(&o, buf, N);
 	for (int i = 1; i < N; i++)
 		if (buf[i - 1] < 128 && buf[i] >= 128)
@@ -171,7 +171,7 @@ static void test_amplitude(void)
 	for (unsigned int s = 0; s < WG_NSHAPES; s++) {
 		int lo = 255, hi = 0;
 
-		wg_init(&o, s, 375, 48000, 0);
+		wg_init(&o, s, 375, 48000, 0, WG_PW_DEFAULT);
 		wg_fill(&o, buf, N);
 		for (int i = 0; i < N; i++)
 			if (buf[i] != 128) {
@@ -179,7 +179,7 @@ static void test_amplitude(void)
 				break;
 			}
 
-		wg_init(&o, s, 375, 48000, 128);
+		wg_init(&o, s, 375, 48000, 128, WG_PW_DEFAULT);
 		wg_fill(&o, buf, N);
 		for (int i = 0; i < N; i++) {
 			lo = buf[i] < lo ? buf[i] : lo;
@@ -188,7 +188,7 @@ static void test_amplitude(void)
 		CHECK(lo >= 64 && hi <= 192, "%s amp 128 range %d..%d",
 		      names[s], lo, hi);
 
-		wg_init(&o, s, 375, 48000, 256);
+		wg_init(&o, s, 375, 48000, 256, WG_PW_DEFAULT);
 		wg_fill(&o, buf, N);
 		lo = 255;
 		hi = 0;
@@ -208,16 +208,66 @@ static void test_phase_stays_24bit(void)
 	struct wg_osc o;
 
 	/* Not a power of two, so wraps don't land phase on 0 by luck. */
-	wg_init(&o, WG_SAWTOOTH, 23999, 48000, 256);
+	wg_init(&o, WG_SAWTOOTH, 23999, 48000, 256, WG_PW_DEFAULT);
 	for (int i = 0; i < 300; i++) {
 		wg_fill(&o, buf, N);
 		CHECK(o.phase < 1u << 24, "phase %#x", o.phase);
 	}
 	/* At Nyquist the square alternates every sample. */
-	wg_init(&o, WG_SQUARE, 24000, 48000, 256);
+	wg_init(&o, WG_SQUARE, 24000, 48000, 256, WG_PW_DEFAULT);
 	wg_fill(&o, buf, 8);
 	for (int i = 1; i < 8; i++)
 		CHECK(buf[i] != buf[i - 1], "nyquist square stuck at %d", i);
+}
+
+static void test_pulse_width(void)
+{
+	/* 375 Hz at 48 kHz: step 2^17, a 128-sample period, no rounding. */
+	static const u32 pw[] = { 0, 1, 1024, 2048, 3072, 4095, WG_PW_MAX };
+	static const int high[] = { 0, 1, 32, 64, 96, 128, 128 };
+	u8 buf[128 * 4], ref[128 * 4];
+	struct wg_osc o;
+
+	for (unsigned int k = 0; k < sizeof(pw) / sizeof(pw[0]); k++) {
+		int n = 0;
+
+		CHECK(wg_init(&o, WG_SQUARE, 375, 48000, 256, pw[k]) == 0,
+		      "pw %u refused", pw[k]);
+		wg_fill(&o, buf, sizeof(buf));
+		for (unsigned int i = 0; i < sizeof(buf); i++) {
+			CHECK(buf[i] == 0 || buf[i] == 255, "pw %u sample %u",
+			      pw[k], i);
+			n += buf[i] == 255;
+		}
+		CHECK(n == high[k] * 4, "pw %u: %d high, want %d", pw[k], n,
+		      high[k] * 4);
+		/* Pulse starts high: the high part is at the top of the period. */
+		CHECK(!high[k] || buf[0] == 255, "pw %u starts low", pw[k]);
+	}
+
+	CHECK(wg_init(&o, WG_SQUARE, 375, 48000, 256, WG_PW_MAX + 1) != 0,
+	      "pw above max accepted");
+
+	/* Only the square looks at pw. */
+	for (unsigned int s = 0; s < WG_NSHAPES; s++) {
+		struct wg_osc a, b;
+
+		if (s == WG_SQUARE)
+			continue;
+		wg_init(&a, s, 375, 48000, 256, 0);
+		wg_init(&b, s, 375, 48000, 256, WG_PW_MAX);
+		wg_fill(&a, buf, sizeof(buf));
+		wg_fill(&b, ref, sizeof(ref));
+		CHECK(!memcmp(buf, ref, sizeof(buf)), "shape %u reads pw", s);
+	}
+
+	/* Retuning pw keeps phase, so the wave carries on without a click. */
+	wg_init(&o, WG_SQUARE, 375, 48000, 256, 2048);
+	wg_fill(&o, buf, 10);
+	CHECK(wg_set(&o, 375, 48000, 256, 3072) == 0, "set pw refused");
+	CHECK(o.phase == 10u << 17, "pw change moved phase to %#x", o.phase);
+	CHECK(wg_set(&o, 375, 48000, 256, WG_PW_MAX + 1) != 0 && o.pw == 3072,
+	      "bad pw changed state");
 }
 
 int main(void)
@@ -231,6 +281,7 @@ int main(void)
 	test_frequency();
 	test_amplitude();
 	test_phase_stays_24bit();
+	test_pulse_width();
 	if (failures) {
 		fprintf(stderr, "test_wavegen: %d failure(s)\n", failures);
 		return 1;

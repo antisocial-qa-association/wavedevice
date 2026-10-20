@@ -8,7 +8,7 @@
  * wave from the top. Reads never end and never come up short except on
  * a signal. Output is unsigned 8-bit mono.
  *
- * Module params freq, rate and amp set what each open() starts with;
+ * Module params freq, rate, amp and pw set what each open() starts with;
  * changing them never disturbs streams already open. A program can
  * retune its own fd with the ioctls in uapi/wavedevice.h.
  *
@@ -71,6 +71,7 @@ static const struct kernel_param_ops wd_param_ops = {
 static struct wd_param wd_freq = { 440, 1, WG_RATE_MAX / 2 };
 static struct wd_param wd_rate = { 48000, 1, WG_RATE_MAX };
 static struct wd_param wd_amp = { 128, 0, WG_AMP_MAX };
+static struct wd_param wd_pw = { WG_PW_DEFAULT, 0, WG_PW_MAX };
 
 module_param_cb(freq, &wd_param_ops, &wd_freq, 0644);
 MODULE_PARM_DESC(freq, "Hz for new opens, 1..rate/2 (default 440)");
@@ -78,6 +79,8 @@ module_param_cb(rate, &wd_param_ops, &wd_rate, 0644);
 MODULE_PARM_DESC(rate, "Samples/s the reader plays at (default 48000)");
 module_param_cb(amp, &wd_param_ops, &wd_amp, 0644);
 MODULE_PARM_DESC(amp, "Amplitude 0..256, 256 = full scale (default 128)");
+module_param_cb(pw, &wd_param_ops, &wd_pw, 0644);
+MODULE_PARM_DESC(pw, "Square pulse width 0..4096, 2048 = 50% (default 2048)");
 
 struct wd_dev {
 	struct miscdevice misc;
@@ -98,7 +101,7 @@ static int wd_open(struct inode *inode, struct file *file)
 	struct wd_dev *dev = container_of(file->private_data,
 					  struct wd_dev, misc);
 	struct wd_file *wf;
-	unsigned int freq, rate, amp;
+	unsigned int freq, rate, amp, pw;
 	int ret;
 
 	ret = nonseekable_open(inode, file);	/* lseek() gets -ESPIPE */
@@ -121,7 +124,8 @@ static int wd_open(struct inode *inode, struct file *file)
 	freq = READ_ONCE(wd_freq.val);
 	rate = READ_ONCE(wd_rate.val);
 	amp = READ_ONCE(wd_amp.val);
-	if (wg_init(&wf->osc, dev->shape, freq, rate, amp)) {
+	pw = READ_ONCE(wd_pw.val);
+	if (wg_init(&wf->osc, dev->shape, freq, rate, amp, pw)) {
 		pr_warn_ratelimited("freq=%u is above rate/2 (rate=%u)\n",
 				    freq, rate);
 		kfree(wf->buf);
@@ -131,6 +135,7 @@ static int wd_open(struct inode *inode, struct file *file)
 	wf->params.freq = freq;
 	wf->params.rate = rate;
 	wf->params.amp = amp;
+	wf->params.pw = pw;
 	mutex_init(&wf->lock);
 	file->private_data = wf;
 	return 0;
@@ -214,7 +219,7 @@ static long wd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			return -EINVAL;
 		if (mutex_lock_interruptible(&wf->lock))
 			return -ERESTARTSYS;
-		if (wg_set(&wf->osc, p.freq, p.rate, p.amp))
+		if (wg_set(&wf->osc, p.freq, p.rate, p.amp, p.pw))
 			ret = -EINVAL;
 		else
 			wf->params = p;
@@ -285,7 +290,7 @@ module_init(wd_init);
 module_exit(wd_exit);
 
 MODULE_DESCRIPTION("Emits periodic waveforms as character devices");
-MODULE_VERSION("0.1.0");	/* keep in step with dkms.conf */
+MODULE_VERSION("0.2.0");	/* keep in step with dkms.conf */
 
 /*
  * The source is public domain (see LICENSE). The kernel has no tag for
